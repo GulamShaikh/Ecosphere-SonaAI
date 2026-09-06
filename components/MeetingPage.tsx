@@ -64,7 +64,6 @@ const AgoraProvider = dynamic(
 export default function MeetingPage() {
   const router = useRouter();
   const [showConversation, setShowConversation] = useState(false);
-  const [isAnimationComplete, setIsAnimationComplete] = useState(false);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
   const [mounted, setMounted] = useState(false);
 
@@ -676,7 +675,7 @@ export default function MeetingPage() {
   }
 
   // Pre-join loading state
-  if (!showConversation || !isAnimationComplete) {
+  if (!showConversation) {
     const glassPanel = {
       background: "rgba(255, 255, 255, 0.6)",
       backdropFilter: "blur(24px)",
@@ -723,7 +722,6 @@ export default function MeetingPage() {
               muted
               playsInline
               className="w-full h-full object-cover"
-              onEnded={() => setIsAnimationComplete(true)}
             />
           </div>
 
