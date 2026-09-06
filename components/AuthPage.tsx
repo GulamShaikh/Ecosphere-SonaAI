@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
-  Sparkles,
   ArrowRight,
   Loader2,
   Github,
@@ -21,8 +21,8 @@ export default function AuthPage() {
   const router = useRouter();
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("demo@echosphere.edu");
-  const [password, setPassword] = useState("teacher123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");
   const [isLoading, setIsLoading] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
@@ -118,11 +118,10 @@ export default function AuthPage() {
             : "/dashboard",
         );
       } else {
-        const { data: authData, error: authError } =
-          await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
+        const { error: authError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
         if (authError) throw authError;
 
         router.push(
@@ -131,8 +130,12 @@ export default function AuthPage() {
             : "/dashboard",
         );
       }
-    } catch (error: any) {
-      alert(error.message || "An error occurred during authentication");
+    } catch (error: unknown) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "An error occurred during authentication",
+      );
       setIsLoading(false);
     }
   };
@@ -146,8 +149,8 @@ export default function AuthPage() {
         },
       });
       if (error) throw error;
-    } catch (error: any) {
-      alert(error.message);
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : "OAuth sign-in failed");
     }
   };
 
@@ -162,8 +165,10 @@ export default function AuthPage() {
       if (error) throw error;
       alert("Password reset link sent! Check your email.");
       setIsResettingPassword(false);
-    } catch (error: any) {
-      alert(error.message || "Failed to send reset link");
+    } catch (error: unknown) {
+      alert(
+        error instanceof Error ? error.message : "Failed to send reset link",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -196,10 +201,13 @@ export default function AuthPage() {
       >
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center">
-          <img
+          <Image
             src="/SonaAI%20icon1.png"
             alt="SonaAI Logo"
             className="mb-4 h-16 w-16 object-contain bg-white p-1.5"
+            width={64}
+            height={64}
+            priority
             style={{
               borderRadius: "16px",
               boxShadow: "0 4px 12px rgba(0,0,0,0.05)",

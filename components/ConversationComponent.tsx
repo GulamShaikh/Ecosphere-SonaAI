@@ -603,7 +603,7 @@ export default function ConversationComponent({
     return () => {
       rtmClient.removeEventListener("message", handleRtmMessage);
     };
-  }, [rtmClient, addConnectionIssue]);
+  }, [rtmClient, agoraData.channel, addConnectionIssue]);
 
   useEffect(() => {
     const announce = () => {

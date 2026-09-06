@@ -596,7 +596,7 @@ export default function MeetingPage() {
     }).catch((error) =>
       console.warn("[sona-mode] initial sync failed:", error),
     );
-  }, [agoraData?.channel, userSession?.role]);
+  }, [agoraData?.channel, aiMode, userSession?.role]);
 
   // Keep everyone's UI in agreement about what SonaAI is allowed to do. Fires on the initial
   // ASK as well, so a student who joins later is told the mode rather than assuming one.

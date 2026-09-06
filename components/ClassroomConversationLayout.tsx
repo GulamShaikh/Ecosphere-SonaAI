@@ -346,6 +346,7 @@ export function ClassroomConversationLayout({
                     <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex items-center gap-4">
                       <img
                         src="/SonaAI%20icon1.png"
+                        alt=""
                         className="w-14 h-14 object-contain rounded-xl shrink-0"
                       />
                       <div>

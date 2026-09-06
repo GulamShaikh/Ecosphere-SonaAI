@@ -128,6 +128,7 @@ pnpm run verify
 ### Feature Contributions
 
 Before starting work on a major feature:
+
 1. Open an issue to discuss the feature
 2. Wait for maintainer feedback
 3. Ensure it aligns with the project's goals
@@ -141,6 +142,7 @@ Before starting work on a major feature:
 ## Documentation
 
 When changing implementation:
+
 - Update relevant sections in `README.md`
 - Update `AGENTS.md` and the relevant `docs/ai/` files if architecture, workflows, conventions, or contracts change
 - Update `docs/ai/RECIPE.md` if recipe extension points, invariants, or stable contracts change
