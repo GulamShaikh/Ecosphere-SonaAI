@@ -8,7 +8,7 @@ This repository uses progressive disclosure documentation. Docs live under `docs
 
 1. Read [docs/ai/L0_repo_card.md](docs/ai/L0_repo_card.md) to identify the repo.
 2. Load ALL 8 files in [docs/ai/L1/](docs/ai/L1/). They are small — load all upfront.
-3. Follow L2 deep-dive links only when L1 isn't detailed enough. The index is at [docs/ai/L1/L2/_index.md](docs/ai/L1/L2/_index.md).
+3. Follow L2 deep-dive links only when L1 isn't detailed enough. The index is at [docs/ai/L1/L2/\_index.md](docs/ai/L1/L2/_index.md).
 
 This repo declares `Recipe Role: base` in L0, so also read [docs/ai/RECIPE.md](docs/ai/RECIPE.md) when evaluating extension points, invariants, or stable contracts.
 
@@ -59,7 +59,7 @@ The sections below (Start Here, Patterns, Anti-Patterns, etc.) remain the canoni
 - `app/api/generate-agora-token/route.ts`: issues RTC + RTM tokens for the browser user.
 - `app/api/invite-agent/route.ts`: starts the managed agent session; edit here for system prompt, VAD, model, or voice changes.
 - `app/api/stop-conversation/route.ts`: stops the agent session.
-- `app/api/chat/completions/route.ts`: optional OpenAI-compatible SSE proxy for a custom LLM (not wired by default).
+- `app/api/chat/completions/route.ts`: OpenAI-compatible SSE endpoint; opt-in SonaAI intervention policy when `SONA_INTERVENTION_ENGINE=true`.
 - `components/MeetingPage.tsx`: session bootstrap, RTM setup, provider wiring, and conversation lifecycle.
 - `components/ConversationComponent.tsx`: RTC join, mic publication, `AgoraVoiceAI` init, transcript state, and renewals.
 - `components/ClassroomConversationLayout.tsx`: in-call header, transcript rail, and controls dock.
@@ -130,6 +130,7 @@ useEffect(() => {
 - Keep token generation on `RtcTokenBuilder.buildTokenWithRtm`.
 - Keep transcript UID remapping aligned with the toolkit sentinel behavior.
 - Do not require third-party vendor API keys unless the code actually introduces a BYOK provider path.
+- Keep the SonaAI intervention engine opt-in; the managed Agora pipeline remains the default.
 - Keep README, AGENTS, and `docs/ai/` aligned with implementation changes.
 
 ## Commands
@@ -211,11 +212,11 @@ Before finishing a change:
 
 ## Doc Commands
 
-| Command         | When to use                                                  |
-| --------------- | ------------------------------------------------------------ |
-| generate docs   | No `docs/ai/` directory exists yet                           |
-| update docs     | Code changed since the `Last Reviewed` date in L0            |
-| test docs       | Verify docs give agents the right context (writes `docs/ai/test-results.md`) |
-| fix docs        | Close findings from a docs review or test run                |
+| Command       | When to use                                                                  |
+| ------------- | ---------------------------------------------------------------------------- |
+| generate docs | No `docs/ai/` directory exists yet                                           |
+| update docs   | Code changed since the `Last Reviewed` date in L0                            |
+| test docs     | Verify docs give agents the right context (writes `docs/ai/test-results.md`) |
+| fix docs      | Close findings from a docs review or test run                                |
 
 The generator and tester live in the [AgoraIO-Community/ai-devkit](https://github.com/AgoraIO-Community/ai-devkit) skill set. See the [progressive disclosure standard](https://github.com/AgoraIO-Community/ai-devkit/blob/main/docs/progressive-disclosure-standard.md) for the full specification.

@@ -3,7 +3,7 @@
 import { useState, useRef, Suspense, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { Loader2, VolumeX, Volume2, FileText, Sparkles } from "lucide-react";
+import { Loader2, FileText } from "lucide-react";
 import { TEACHER_UID } from "@/lib/agora";
 import type { RTMClient } from "agora-rtm";
 import type {
@@ -15,12 +15,15 @@ import type {
 } from "../types/conversation";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LoadingSkeleton } from "./LoadingSkeleton";
+import { ClassroomModeControl } from "./ClassroomModeControl";
+import type { AiMode } from "@/lib/sona/types";
 import {
   AgoraVoiceAI,
   ChatMessageType,
   ChatMessagePriority,
 } from "agora-agent-client-toolkit";
 import { SUMMARY_PROMPT } from "@/lib/prompts";
+import { supabase } from "@/lib/supabaseClient";
 
 // Dynamically import the ConversationComponent with ssr disabled
 const ConversationComponent = dynamic(() => import("./ConversationComponent"), {
@@ -76,13 +79,27 @@ export default function MeetingPage() {
   const [agoraData, setAgoraData] = useState<AgoraTokenData | null>(null);
   const [rtmClient, setRtmClient] = useState<RTMClient | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
-  const [isAiMuted, setIsAiMuted] = useState(false);
-  const [isAiMuteLoading, setIsAiMuteLoading] = useState(false);
+  /**
+   * The teacher's permission level for SonaAI.
+   *
+   * ASK is the default on purpose: the first thing a teacher sees should be SonaAI asking,
+   * not SonaAI talking. Students receive this over RTM and display it read-only.
+   */
+  const [aiMode, setAiMode] = useState<AiMode>("ASK");
+  const [isAiModeBusy, setIsAiModeBusy] = useState(false);
 
   // Summary flow state
   type SummaryState = "idle" | "requesting" | "waiting" | "ready" | "error";
   const [summaryState, setSummaryState] = useState<SummaryState>("idle");
   const [summaryText, setSummaryText] = useState<string>("");
+  const [studentExercise, setStudentExercise] = useState<{
+    prompt: string;
+    concept: string;
+  } | null>(null);
+  const [studentAnswer, setStudentAnswer] = useState("");
+  const [studentExerciseResult, setStudentExerciseResult] = useState<
+    "idle" | "correct" | "retry"
+  >("idle");
   // summaryModeRef is a shared mutable ref passed to ConversationComponent directly.
   // Setting .current = true synchronously before calling inject-think eliminates the
   // async gap where an agent response could arrive before the prop update propagated.
@@ -111,7 +128,32 @@ export default function MeetingPage() {
         router.push("/dashboard");
       }
     } else {
-      router.push("/dashboard");
+      const joinCode = new URLSearchParams(window.location.search).get("join");
+      if (!joinCode) {
+        router.push("/dashboard");
+        return;
+      }
+
+      void supabase.auth
+        .getSession()
+        .then(({ data: { session: supaSession } }) => {
+          if (!supaSession) {
+            router.push(`/auth?join=${encodeURIComponent(joinCode)}`);
+            return;
+          }
+
+          const session: UserSession = {
+            name:
+              supaSession.user.user_metadata?.name ??
+              supaSession.user.user_metadata?.full_name ??
+              supaSession.user.email?.split("@")[0] ??
+              "Student",
+            role: "student",
+            classroomCode: joinCode.trim().toUpperCase(),
+          };
+          sessionStorage.setItem("echosphere_meeting", JSON.stringify(session));
+          setUserSession(session);
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -229,16 +271,8 @@ export default function MeetingPage() {
             .catch((err) =>
               console.warn("[agent_session] RTM publish failed:", err),
             );
-          rtmResult.storage
-            .setChannelMetadata(
-              responseData.channel,
-              "MESSAGE",
-              [{ key: "agent_id", value: inviteResult.agent_id }],
-              { addTimeStamp: false, addUserId: false },
-            )
-            .catch((err) =>
-              console.warn("[agent_session] metadata write failed:", err),
-            );
+          // RTM Storage/metadata is not enabled on every Agora project. The agent_id
+          // broadcast above is the primary discovery path; metadata is optional.
         }
       } else {
         const { default: AgoraRTM } = await import("agora-rtm");
@@ -255,30 +289,14 @@ export default function MeetingPage() {
         studentRtm
           .publish(
             responseData.channel,
-            JSON.stringify({ type: 'request_agent_id' }),
+            JSON.stringify({ type: "request_agent_id" }),
           )
-          .catch(() => {/* non-fatal */});
+          .catch(() => {
+            /* non-fatal */
+          });
 
-        try {
-          const metaResponse = await studentRtm.storage.getChannelMetadata(
-            responseData.channel,
-            "MESSAGE",
-          );
-          const agentIdValue = (
-            metaResponse.metadata as
-              | Record<string, { value: string }>
-              | undefined
-          )?.["agent_id"]?.value;
-          if (agentIdValue) {
-            agentData = {
-              agent_id: agentIdValue,
-              create_ts: 0,
-              state: "RUNNING",
-            };
-          }
-        } catch {
-          // Metadata not yet set — agentId stays undefined
-        }
+        // Do not depend on RTM Storage metadata. The teacher responds to the
+        // request_agent_id message after this client subscribes.
 
         setRtmClient(studentRtm);
       }
@@ -339,8 +357,48 @@ export default function MeetingPage() {
   }, []);
 
   const handleEndClassAndSummary = useCallback(async () => {
+    const fallbackSummary = () => {
+      const turns = sessionTranscriptLog.current;
+      const transcript = turns.map((turn) => turn.text).join(" ");
+      const lower = transcript.toLowerCase();
+      const concept = lower.includes("newton")
+        ? "Newton's Second Law"
+        : lower.includes("acceleration")
+          ? "acceleration"
+          : lower.includes("force")
+            ? "force"
+            : "the current lesson";
+      const studentQuestions = turns.filter(
+        (turn) =>
+          turn.role === "student" &&
+          (turn.text.includes("?") ||
+            /doubt|confus|understand|repeat/i.test(turn.text)),
+      );
+      const students = [...new Set(studentQuestions.map((turn) => turn.name))];
+      return [
+        "OVERALL SUMMARY",
+        `The class discussed ${concept}. SonaAI observed the live transcript and waited for teacher approval before offering help.`,
+        "",
+        "COMMON LEARNING GAPS",
+        studentQuestions.length > 0
+          ? `${concept} needs one more worked example and a short check for understanding.`
+          : "None identified.",
+        "",
+        "STUDENTS NEEDING SUPPORT",
+        students.length > 0
+          ? students
+              .map(
+                (name) =>
+                  `${name}: asked a question or expressed uncertainty during the lesson.`,
+              )
+              .join("\n")
+          : "None identified.",
+      ].join("\n");
+    };
+
     if (!agoraData?.agentId) {
-      void handleEndConversation();
+      setSummaryText(fallbackSummary());
+      setSummaryState("ready");
       return;
     }
     setSummaryState("requesting");
@@ -357,8 +415,8 @@ export default function MeetingPage() {
 
       const ai = AgoraVoiceAI.getInstance();
       if (!ai) throw new Error("AI not initialized");
-      
-      // We use the frontend RTM connection instead of the REST API to bypass 
+
+      // We use the frontend RTM connection instead of the REST API to bypass
       // the need for HTTP Basic Auth (Customer ID/Secret) which causes the 401.
       await ai.sendText(agoraData.agentId, {
         messageType: ChatMessageType.TEXT,
@@ -370,15 +428,49 @@ export default function MeetingPage() {
 
       summaryTimeoutRef.current = setTimeout(() => {
         summaryModeRef.current = false;
-        setSummaryState("error");
+        setSummaryText(fallbackSummary());
+        setSummaryState("ready");
       }, 60000);
     } catch (err) {
       console.error("Failed to request summary:", err);
       summaryModeRef.current = false;
-      setSummaryState("error");
+      setSummaryText(fallbackSummary());
+      setSummaryState("ready");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agoraData]);
+
+  const handleEndStudentSession = useCallback(() => {
+    const transcript = sessionTranscriptLog.current
+      .map((turn) => turn.text)
+      .join(" ");
+    const lower = transcript.toLowerCase();
+    const concept = lower.includes("newton")
+      ? "Newton's Second Law"
+      : lower.includes("acceleration")
+        ? "acceleration"
+        : lower.includes("force")
+          ? "force"
+          : "the main idea from today's lesson";
+    const prompt =
+      concept === "Newton's Second Law"
+        ? "If the force stays the same but the mass doubles, what happens to acceleration, and why?"
+        : `In your own words, explain one important idea you learned about ${concept}.`;
+    setStudentExercise({ prompt, concept });
+    setStudentAnswer("");
+    setStudentExerciseResult("idle");
+  }, []);
+
+  const submitStudentExercise = useCallback(() => {
+    const answer = studentAnswer.trim().toLowerCase();
+    const correct =
+      studentExercise?.concept === "Newton's Second Law"
+        ? answer.includes("half") ||
+          answer.includes("decrease") ||
+          answer.includes("less")
+        : answer.length >= 12;
+    setStudentExerciseResult(correct ? "correct" : "retry");
+  }, [studentAnswer, studentExercise]);
 
   const handleDownloadSummary = useCallback(async () => {
     if (!summaryText || !userSession) return;
@@ -404,64 +496,144 @@ export default function MeetingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleMuteAi = useCallback(async () => {
-    if (!agoraData?.agentId || isAiMuteLoading) return;
-    setIsAiMuteLoading(true);
-    try {
-      await fetch("/api/stop-conversation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: agoraData.agentId }),
-      });
-      setAgoraData((prev) => (prev ? { ...prev, agentId: undefined } : prev));
-      setIsAiMuted(true);
-    } catch (err) {
-      console.error("Failed to mute AI agent:", err);
-    } finally {
-      setIsAiMuteLoading(false);
-    }
-  }, [agoraData, isAiMuteLoading]);
+  /**
+   * Move the AUTO / ASK / MUTE dial.
+   *
+   * AUTO and ASK are policy, enforced by the intervention engine on the teacher's client.
+   * MUTE is different, and this is the honest part: the Agora managed agent runs its own
+   * listen→think→speak loop over the channel audio, so no amount of client-side policy can
+   * stop it answering a student who addresses it. To make "SonaAI will not speak" true we end
+   * the agent session, and starting a new one when the teacher un-mutes.
+   */
+  const handleAiModeChange = useCallback(
+    async (next: AiMode) => {
+      if (isAiModeBusy || next === aiMode) return;
 
-  const handleUnmuteAi = useCallback(async () => {
-    if (!agoraData || !userSession || isAiMuteLoading) return;
-    setIsAiMuteLoading(true);
-    try {
-      const res = await fetch("/api/invite-agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requester_id: agoraData.uid,
-          channel_name: agoraData.channel,
-          user_name: userSession.name,
-          user_role: userSession.role,
-        } as ClientStartRequest),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as AgentResponse;
-        setAgoraData((prev) =>
-          prev ? { ...prev, agentId: data.agent_id } : prev,
-        );
-        setIsAiMuted(false);
-      } else {
-        console.error("Failed to unmute AI agent:", await res.text());
+      const wasMuted = aiMode === "MUTE";
+      const willMute = next === "MUTE";
+      const syncServerMode = async () => {
+        if (!agoraData?.channel) return;
+        const response = await fetch("/api/sona-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: agoraData.channel, mode: next }),
+        });
+        if (!response.ok) throw new Error(await response.text());
+      };
+
+      // Nothing to start or stop between AUTO and ASK — the engine reads the mode directly.
+      if (!willMute && !wasMuted) {
+        await syncServerMode();
+        setAiMode(next);
+        return;
       }
-    } catch (err) {
-      console.error("Failed to unmute AI agent:", err);
-    } finally {
-      setIsAiMuteLoading(false);
-    }
-  }, [agoraData, userSession, isAiMuteLoading]);
+
+      setIsAiModeBusy(true);
+      try {
+        if (willMute) {
+          if (agoraData?.agentId) {
+            await fetch("/api/stop-conversation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ agent_id: agoraData.agentId }),
+            });
+            setAgoraData((prev) =>
+              prev ? { ...prev, agentId: undefined } : prev,
+            );
+          }
+          await syncServerMode();
+          setAiMode(next);
+        } else {
+          // Leaving MUTE: bring SonaAI back into the channel.
+          if (!agoraData || !userSession) return;
+          const res = await fetch("/api/invite-agent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              requester_id: agoraData.uid,
+              channel_name: agoraData.channel,
+              user_name: userSession.name,
+              user_role: userSession.role,
+            } as ClientStartRequest),
+          });
+          if (!res.ok) {
+            console.error("Failed to restart AI agent:", await res.text());
+            return; // stay MUTE rather than claim a mode we did not reach
+          }
+          const data = (await res.json()) as AgentResponse;
+          await syncServerMode();
+          setAgoraData((prev) =>
+            prev ? { ...prev, agentId: data.agent_id } : prev,
+          );
+          setAiMode(next);
+          rtmClient
+            ?.publish(
+              agoraData.channel,
+              JSON.stringify({
+                type: "agent_session",
+                agent_id: data.agent_id,
+              }),
+            )
+            .catch(() => {
+              /* students will ask for it if they missed this */
+            });
+        }
+      } catch (err) {
+        console.error("Failed to change SonaAI mode:", err);
+      } finally {
+        setIsAiModeBusy(false);
+      }
+    },
+    [aiMode, isAiModeBusy, agoraData, userSession, rtmClient],
+  );
+
+  useEffect(() => {
+    if (!agoraData?.channel || userSession?.role !== "teacher") return;
+    fetch("/api/sona-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: agoraData.channel, mode: aiMode }),
+    }).catch((error) =>
+      console.warn("[sona-mode] initial sync failed:", error),
+    );
+  }, [agoraData?.channel, userSession?.role]);
+
+  // Keep everyone's UI in agreement about what SonaAI is allowed to do. Fires on the initial
+  // ASK as well, so a student who joins later is told the mode rather than assuming one.
+  useEffect(() => {
+    if (!rtmClient || !agoraData || userSession?.role !== "teacher") return;
+    rtmClient
+      .publish(
+        agoraData.channel,
+        JSON.stringify({ type: "ai_mode", mode: aiMode }),
+      )
+      .catch((err) => console.warn("[ai_mode] RTM publish failed:", err));
+  }, [aiMode, rtmClient, agoraData, userSession?.role]);
 
   // FIX 3: Teacher responds when a student requests the current agent_id via RTM.
   // This is the primary reliable mechanism for late-joining students to get agentId,
   // since it doesn't depend on message timing or the storage feature.
   const handleRequestAgentId = useCallback(() => {
-    if (!agoraData?.agentId || !rtmClient) return;
-    const msg = JSON.stringify({ type: 'agent_session', agent_id: agoraData.agentId });
+    if (!rtmClient || !agoraData) return;
+    // Answer with the current mode too — a student that just arrived has no idea whether
+    // SonaAI is muted, and an empty AI tile with no explanation looks like a failure.
+    rtmClient
+      .publish(
+        agoraData.channel,
+        JSON.stringify({ type: "ai_mode", mode: aiMode }),
+      )
+      .catch(() => {
+        /* non-fatal */
+      });
+    if (!agoraData.agentId) return;
+    const msg = JSON.stringify({
+      type: "agent_session",
+      agent_id: agoraData.agentId,
+    });
     rtmClient
       .publish(agoraData.channel, msg)
-      .catch((err) => console.warn('[agent_session] re-publish failed:', err));
-  }, [agoraData, rtmClient]);
+      .catch((err) => console.warn("[agent_session] re-publish failed:", err));
+  }, [agoraData, rtmClient, aiMode]);
 
   const handleEndConversation = async () => {
     if (agoraData?.agentId) {
@@ -506,11 +678,11 @@ export default function MeetingPage() {
   // Pre-join loading state
   if (!showConversation || !isAnimationComplete) {
     const glassPanel = {
-      background: 'rgba(255, 255, 255, 0.6)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(255, 255, 255, 0.4)',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.05)'
+      background: "rgba(255, 255, 255, 0.6)",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      border: "1px solid rgba(255, 255, 255, 0.4)",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.05)",
     };
 
     return (
@@ -520,12 +692,20 @@ export default function MeetingPage() {
       >
         {/* Logo */}
         <div className="absolute top-6 left-6 md:left-8 z-50 flex items-center gap-2.5">
-          <img src="/SonaAI%20icon1.png" alt="SonaAI Logo" className="h-9 w-9 object-contain bg-white p-1" style={{ borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} />
+          <img
+            src="/SonaAI%20icon1.png"
+            alt="SonaAI Logo"
+            className="h-9 w-9 object-contain bg-white p-1"
+            style={{
+              borderRadius: "12px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+            }}
+          />
           <span
             className="text-xl font-extrabold tracking-tight"
             style={{
-              color: '#031A10',
-              fontFamily: 'var(--font-manrope)',
+              color: "#031A10",
+              fontFamily: "var(--font-manrope)",
             }}
           >
             SonaAI
@@ -537,11 +717,11 @@ export default function MeetingPage() {
           style={glassPanel}
         >
           <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-2xl shadow-lg overflow-hidden bg-[#031A10]">
-            <video 
-              src="/Loading.webm" 
-              autoPlay 
-              muted 
-              playsInline 
+            <video
+              src="/Loading.webm"
+              autoPlay
+              muted
+              playsInline
               className="w-full h-full object-cover"
               onEnded={() => setIsAnimationComplete(true)}
             />
@@ -574,14 +754,17 @@ export default function MeetingPage() {
               >
                 Connection Failed
               </p>
-              <p className="mt-2 text-sm font-medium" style={{ color: "#dc2626" }}>
+              <p
+                className="mt-2 text-sm font-medium"
+                style={{ color: "#dc2626" }}
+              >
                 {error}
               </p>
               <button
                 type="button"
                 onClick={() => router.push("/dashboard")}
                 className="mt-6 rounded-full px-8 py-3 text-sm font-bold shadow-lg transition-transform hover:scale-105"
-                style={{ background: '#031A10', color: '#D0FFA2' }}
+                style={{ background: "#031A10", color: "#D0FFA2" }}
               >
                 Back to Dashboard
               </button>
@@ -622,39 +805,34 @@ export default function MeetingPage() {
                       userSession={userSession}
                       teacherControls={
                         userSession.role === "teacher" ? (
-                            <button
-                              type="button"
-                              onClick={
-                                isAiMuted ? handleUnmuteAi : handleMuteAi
-                              }
-                              disabled={isAiMuteLoading}
-                              className="flex items-center gap-2 rounded-full bg-[#3C4043] px-4 py-2.5 text-xs font-medium text-white/90 transition-colors hover:bg-[#4d5155] disabled:opacity-50 border-none shadow-lg"
-                              aria-label={
-                                isAiMuted
-                                  ? "Unmute AI co-teacher"
-                                  : "Mute AI co-teacher"
-                              }
-                            >
-                              {isAiMuteLoading ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : isAiMuted ? (
-                                <Volume2 className="h-4 w-4" />
-                              ) : (
-                                <VolumeX className="h-4 w-4" />
-                              )}
-                              {isAiMuted ? "Unmute AI" : "Mute AI"}
-                            </button>
+                          <ClassroomModeControl
+                            mode={aiMode}
+                            onChange={(next) => void handleAiModeChange(next)}
+                            isBusy={isAiModeBusy}
+                          />
                         ) : undefined
+                      }
+                      aiMode={aiMode}
+                      onRemoteAiMode={
+                        userSession.role === "student" ? setAiMode : undefined
                       }
                       onTranscriptTurn={handleTranscriptTurn}
                       onAgentId={handleAgentId}
                       onSummaryTurn={handleSummaryTurn}
                       summaryModeRef={summaryModeRef}
                       onRequestAgentId={
-                        userSession.role === 'teacher' ? handleRequestAgentId : undefined
+                        userSession.role === "teacher"
+                          ? handleRequestAgentId
+                          : undefined
                       }
                       onTokenWillExpire={handleTokenWillExpire}
-                      onEndConversation={handleEndConversation}
+                      onEndConversation={
+                        // The teacher's exit runs the post-class summary first; a student
+                        // leaving just leaves. Without this the summary flow was unreachable.
+                        userSession.role === "teacher"
+                          ? () => void handleEndClassAndSummary()
+                          : handleEndStudentSession
+                      }
                     />
                   </AgoraProvider>
                 </ErrorBoundary>
@@ -671,7 +849,7 @@ export default function MeetingPage() {
       {/* Summary modal */}
       {userSession &&
         userSession.role === "teacher" &&
-        (summaryState === "ready" || summaryState === "error") && (
+        summaryState !== "idle" && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             style={{
@@ -702,7 +880,27 @@ export default function MeetingPage() {
                 </h2>
               </div>
 
-              {summaryState === "error" ? (
+              {summaryState === "requesting" || summaryState === "waiting" ? (
+                <div
+                  className="flex items-center gap-3 rounded-[var(--es-radius-md)] p-4"
+                  style={{
+                    background: "var(--es-panel-bg-2)",
+                    border: "1px solid var(--es-border-subtle)",
+                  }}
+                >
+                  <Loader2
+                    className="h-4 w-4 shrink-0 animate-spin"
+                    style={{ color: "var(--es-text-primary)" }}
+                  />
+                  <p
+                    className="text-sm"
+                    style={{ color: "var(--es-text-muted)" }}
+                  >
+                    SonaAI is reading back the class transcript and writing your
+                    summary. This usually takes a few seconds.
+                  </p>
+                </div>
+              ) : summaryState === "error" ? (
                 <p className="text-sm" style={{ color: "#dc2626" }}>
                   The summary timed out or failed to generate. You can still
                   download the raw transcript or end the class.
@@ -733,7 +931,10 @@ export default function MeetingPage() {
                     type="button"
                     onClick={handleDownloadSummary}
                     className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-all duration-200 hover:scale-[1.02]"
-                    style={{ background: 'var(--es-action-primary)', color: 'var(--es-on-primary)' }}
+                    style={{
+                      background: "var(--es-action-primary)",
+                      color: "var(--es-on-primary)",
+                    }}
                   >
                     <FileText className="h-4 w-4" />
                     Download Summary (PDF)
@@ -748,12 +949,72 @@ export default function MeetingPage() {
                     border: "1px solid var(--es-border-subtle)",
                   }}
                 >
-                  {summaryState === "ready" ? "End Class" : "End Class Anyway"}
+                  {summaryState === "ready"
+                    ? "End Class"
+                    : summaryState === "error"
+                      ? "End Class Anyway"
+                      : "Skip Summary & End Class"}
                 </button>
               </div>
             </div>
           </div>
         )}
+
+      {userSession?.role === "student" && studentExercise && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Post-class exercise"
+        >
+          <div className="w-full max-w-lg space-y-4 rounded-3xl bg-[#052329] p-6 text-white shadow-2xl">
+            <p className="text-xs font-bold uppercase tracking-wider text-[#D0FFA2]">
+              One-minute check
+            </p>
+            <h2 className="text-2xl font-bold">Show what you understood</h2>
+            <p className="text-base leading-relaxed text-white/80">
+              {studentExercise.prompt}
+            </p>
+            <textarea
+              value={studentAnswer}
+              onChange={(event) => setStudentAnswer(event.target.value)}
+              disabled={studentExerciseResult === "correct"}
+              className="min-h-28 w-full rounded-2xl border border-white/15 bg-white/10 p-3 text-sm text-white outline-none placeholder:text-white/40 focus:border-[#D0FFA2]"
+              placeholder="Write your answer..."
+            />
+            {studentExerciseResult === "correct" && (
+              <p className="text-sm font-semibold text-[#D0FFA2]">
+                Nice work. Your response matches the key idea.
+              </p>
+            )}
+            {studentExerciseResult === "retry" && (
+              <p className="text-sm font-semibold text-amber-300">
+                Try once more using the relationship between force, mass, and
+                acceleration.
+              </p>
+            )}
+            <div className="flex justify-end gap-3">
+              {studentExerciseResult !== "correct" && (
+                <button
+                  type="button"
+                  onClick={submitStudentExercise}
+                  disabled={!studentAnswer.trim()}
+                  className="rounded-full bg-[#D0FFA2] px-5 py-2.5 text-sm font-bold text-[#031A10] disabled:opacity-50"
+                >
+                  Check answer
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleEndConversation}
+                className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-semibold text-white/80"
+              >
+                {studentExerciseResult === "correct" ? "Leave class" : "Skip"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

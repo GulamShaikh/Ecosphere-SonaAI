@@ -21,7 +21,7 @@ Repo: AgoraIO-Conversational-AI/agent-quickstart-nextjs
 - Every L2 content file starts with `> **When to Read This:**`.
 - Markdown relative links resolve.
 - `AGENTS.md` has How to Load, Git Conventions, and Doc Commands.
-- `CLAUDE.md` references `@AGENTS.md`.
+- `AGENTS.md` is the canonical agent guide.
 
 ## Results
 

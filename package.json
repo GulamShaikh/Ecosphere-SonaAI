@@ -13,8 +13,9 @@
     "start": "next start",
     "lint": "eslint .",
     "verify:api": "node --import tsx scripts/verify-api-contracts.ts",
+    "test": "node --import tsx --test lib/sona/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "verify": "pnpm run doctor && pnpm run lint && pnpm run typecheck && pnpm run verify:api && pnpm run build"
+    "verify": "pnpm run doctor && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run verify:api && pnpm run build"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.39",

@@ -30,6 +30,9 @@ agora project doctor --deep
 
 - `NEXT_PUBLIC_AGORA_APP_ID`: Agora project App ID.
 - `NEXT_AGORA_APP_CERTIFICATE`: Agora App Certificate (server only).
+- `SONA_INTERVENTION_ENGINE`: optional flag enabling the forked deterministic intervention engine.
+- `SONA_PUBLIC_BASE_URL`: public HTTPS app URL required when the custom engine is enabled.
+- `SONA_LLM_SHARED_SECRET`: server-only secret used by Agora to authenticate custom LLM calls.
 
 The base `.env.local` contract contains only these Agora credentials. Agent behavior defaults live in code, and optional BYOK examples are documented later in the root README.
 
@@ -63,6 +66,7 @@ Requires env/project binding:
 - App + API routes run at `http://localhost:3000`.
 - Session starts from `QuickstartPreCallCard` (`Try it now`) and bootstraps token + RTM + invite flow.
 - If transcript or agent join fails, first run `agora project doctor --deep`.
+- Agora cannot call a `localhost` custom LLM endpoint. Use a deployed HTTPS URL or tunnel before enabling `SONA_INTERVENTION_ENGINE`.
 
 ## CI Expectations
 
@@ -72,12 +76,12 @@ Requires env/project binding:
 
 ## Troubleshooting Matrix
 
-| Symptom | Probable Cause | First Check | Fix Path |
-| --- | --- | --- | --- |
-| Agent never joins | Invite route or env mismatch | `pnpm run doctor` and invite route logs | Verify the shared agent UID and invite payload |
-| Transcript missing | RTM token capability missing | Token route implementation | Ensure `buildTokenWithRtm` remains unchanged |
-| `verify` fails at doctor | Project not bound | `agora project use` output | Re-bind project and rewrite `.env.local` |
-| Mic publishes but no agent response | Agent start failed | UI warning (`agentJoinError`) | Inspect `/api/invite-agent` response |
+| Symptom                             | Probable Cause               | First Check                             | Fix Path                                       |
+| ----------------------------------- | ---------------------------- | --------------------------------------- | ---------------------------------------------- |
+| Agent never joins                   | Invite route or env mismatch | `pnpm run doctor` and invite route logs | Verify the shared agent UID and invite payload |
+| Transcript missing                  | RTM token capability missing | Token route implementation              | Ensure `buildTokenWithRtm` remains unchanged   |
+| `verify` fails at doctor            | Project not bound            | `agora project use` output              | Re-bind project and rewrite `.env.local`       |
+| Mic publishes but no agent response | Agent start failed           | UI warning (`agentJoinError`)           | Inspect `/api/invite-agent` response           |
 
 ## Local-Only vs Deploy-Specific
 

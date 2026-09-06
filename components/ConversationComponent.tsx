@@ -47,9 +47,15 @@ import {
   type ClassroomAgentMetric,
 } from "./ClassroomPipelineMetrics";
 import { ClassroomTranscriptPanel } from "./ClassroomTranscriptPanel";
+import { ClassroomAiStateBadge } from "./ClassroomAiStateBadge";
+import { ClassroomInterventionCard } from "./ClassroomInterventionCard";
+import { ClassroomSignalPanel } from "./ClassroomSignalPanel";
+import { useInterventionEngine } from "@/hooks/useInterventionEngine";
+import type { AiMode, InterventionDecision } from "@/lib/sona/types";
 import type {
   ConversationComponentProps,
   TranscriptTurn,
+  ParticipantPresence,
 } from "@/types/conversation";
 
 // Cap the displayed issues list to avoid overwhelming the UI during a cascade of errors.
@@ -108,11 +114,24 @@ function isTranscriptTurnPayload(
   );
 }
 
+// Payload the teacher broadcasts whenever the AUTO / ASK / MUTE dial moves, so every
+// participant's UI reflects the permission the teacher actually granted.
+function isAiModePayload(
+  value: unknown,
+): value is { type: "ai_mode"; mode: AiMode } {
+  if (!value || typeof value !== "object") return false;
+  if ((value as { type?: unknown }).type !== "ai_mode") return false;
+  const mode = (value as { mode?: unknown }).mode;
+  return mode === "AUTO" || mode === "ASK" || mode === "MUTE";
+}
+
 export default function ConversationComponent({
   agoraData,
   rtmClient,
   userSession,
   teacherControls,
+  aiMode = "ASK",
+  onRemoteAiMode,
   onTranscriptTurn,
   onSummaryTurn,
   summaryModeRef,
@@ -133,6 +152,11 @@ export default function ConversationComponent({
   // Tracks turn_ids that have already been broadcast to avoid double-sending.
   const broadcastedTurnIds = useRef(new Set<number>());
 
+  // Assigned from the intervention engine further down. The transcript and RTM effects capture
+  // this ref rather than the callback itself, so they never re-register (and never re-join the
+  // channel) when the engine's identity changes.
+  const ingestTurnRef = useRef<((turn: TranscriptTurn) => void) | null>(null);
+
   // Stable ref for onTranscriptTurn — avoids re-registering RTM listeners when
   // the callback identity changes (e.g. on every LandingPage render).
   const onTranscriptTurnRef = useRef(onTranscriptTurn);
@@ -141,7 +165,9 @@ export default function ConversationComponent({
   }, [onTranscriptTurn]);
   // Stable refs for summary capture.
   const onSummaryTurnRef = useRef(onSummaryTurn);
-  useEffect(() => { onSummaryTurnRef.current = onSummaryTurn; }, [onSummaryTurn]);
+  useEffect(() => {
+    onSummaryTurnRef.current = onSummaryTurn;
+  }, [onSummaryTurn]);
   // summaryModeRef is a shared mutable ref passed directly from the parent —
   // no local mirroring needed. The parent sets .current = true synchronously
   // before calling inject-think, so we read the same object with no async gap.
@@ -161,15 +187,34 @@ export default function ConversationComponent({
 
   // Stable refs for onAgentId and onRequestAgentId.
   const onAgentIdRef = useRef(onAgentId);
-  useEffect(() => { onAgentIdRef.current = onAgentId; }, [onAgentId]);
+  useEffect(() => {
+    onAgentIdRef.current = onAgentId;
+  }, [onAgentId]);
   const onRequestAgentIdRef = useRef(onRequestAgentId);
-  useEffect(() => { onRequestAgentIdRef.current = onRequestAgentId; }, [onRequestAgentId]);
+  useEffect(() => {
+    onRequestAgentIdRef.current = onRequestAgentId;
+  }, [onRequestAgentId]);
+  const onRemoteAiModeRef = useRef(onRemoteAiMode);
+  useEffect(() => {
+    onRemoteAiModeRef.current = onRemoteAiMode;
+  }, [onRemoteAiMode]);
 
   // Tracks granular RTC connection state for the status dot.
   // Agora states: DISCONNECTED | CONNECTING | CONNECTED | DISCONNECTING | RECONNECTING
   const [connectionState, setConnectionState] = useState<string>("CONNECTING");
   const agentUID = String(DEFAULT_AGENT_UID);
   const [joinedUID, setJoinedUID] = useState<UID>(0);
+  const [participants, setParticipants] = useState<ParticipantPresence[]>([
+    { uid: agoraData.uid, name: userSession.name, role: userSession.role },
+  ]);
+  const participantsRef = useRef(
+    new Map<string, ParticipantPresence>([
+      [
+        agoraData.uid,
+        { uid: agoraData.uid, name: userSession.name, role: userSession.role },
+      ],
+    ]),
+  );
 
   // Transcript + agent state — managed with AgoraVoiceAI (see effect below).
   const [rawTranscript, setRawTranscript] = useState<
@@ -322,6 +367,7 @@ export default function ConversationComponent({
 
             // Notify local accumulator immediately (no need to receive own RTM message).
             onTranscriptTurnRef.current?.(turn);
+            ingestTurnRef.current?.(turn);
 
             // If summary mode is active and this is the agent's turn, capture it
             // as the post-class summary (fire once per attempt).
@@ -331,7 +377,7 @@ export default function ConversationComponent({
               isAgent &&
               (summaryModeRef?.current ?? false) &&
               !summaryCaptured.current &&
-              typeof item.text === 'string' &&
+              typeof item.text === "string" &&
               item.text.trim().length > 0
             ) {
               summaryCaptured.current = true;
@@ -468,6 +514,66 @@ export default function ConversationComponent({
       // We skip turns from ourselves (already handled in TRANSCRIPT_UPDATED above).
       if (isTranscriptTurnPayload(parsed)) {
         onTranscriptTurnRef.current?.(parsed);
+        // The teacher's engine needs student turns to see a pattern at all; this is the only
+        // place they arrive. The engine dedupes, so an echo of our own publish is harmless.
+        ingestTurnRef.current?.(parsed);
+      }
+
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { type?: unknown }).type === "participant_presence"
+      ) {
+        const participant = (parsed as { participant?: ParticipantPresence })
+          .participant;
+        if (
+          participant &&
+          typeof participant.uid === "string" &&
+          typeof participant.name === "string" &&
+          (participant.role === "teacher" || participant.role === "student")
+        ) {
+          participantsRef.current.set(participant.uid, participant);
+          setParticipants([...participantsRef.current.values()]);
+        }
+      }
+
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { type?: unknown }).type === "participant_presence_request"
+      ) {
+        rtmClient
+          .publish(
+            agoraData.channel,
+            JSON.stringify({
+              type: "participant_roster",
+              participants: [...participantsRef.current.values()],
+            }),
+          )
+          .catch(() => {});
+      }
+
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { type?: unknown }).type === "participant_roster"
+      ) {
+        const roster = (parsed as { participants?: ParticipantPresence[] })
+          .participants;
+        if (Array.isArray(roster)) {
+          for (const participant of roster) {
+            if (participant?.uid && participant.name) {
+              participantsRef.current.set(participant.uid, participant);
+            }
+          }
+          setParticipants([...participantsRef.current.values()]);
+        }
+      }
+
+      // The teacher moved the AUTO / ASK / MUTE dial. Students mirror it so everyone in the
+      // room can see what SonaAI is currently permitted to do.
+      if (isAiModePayload(parsed)) {
+        onRemoteAiModeRef.current?.(parsed.mode);
       }
 
       // Receive the agent_id the teacher broadcast when the agent session started.
@@ -475,9 +581,9 @@ export default function ConversationComponent({
       // before receiving the agent_id via the initial token/metadata path).
       if (
         parsed &&
-        typeof parsed === 'object' &&
-        (parsed as { type?: unknown }).type === 'agent_session' &&
-        typeof (parsed as { agent_id?: unknown }).agent_id === 'string'
+        typeof parsed === "object" &&
+        (parsed as { type?: unknown }).type === "agent_session" &&
+        typeof (parsed as { agent_id?: unknown }).agent_id === "string"
       ) {
         onAgentIdRef.current?.((parsed as { agent_id: string }).agent_id);
       }
@@ -486,8 +592,8 @@ export default function ConversationComponent({
       // The teacher's client responds by re-broadcasting agent_session if it has one.
       if (
         parsed &&
-        typeof parsed === 'object' &&
-        (parsed as { type?: unknown }).type === 'request_agent_id'
+        typeof parsed === "object" &&
+        (parsed as { type?: unknown }).type === "request_agent_id"
       ) {
         onRequestAgentIdRef.current?.();
       }
@@ -498,6 +604,38 @@ export default function ConversationComponent({
       rtmClient.removeEventListener("message", handleRtmMessage);
     };
   }, [rtmClient, addConnectionIssue]);
+
+  useEffect(() => {
+    const announce = () => {
+      const ownPresence: ParticipantPresence = {
+        uid: agoraData.uid,
+        name: userSession.name,
+        role: userSession.role,
+      };
+      rtmClient
+        .publish(
+          agoraData.channel,
+          JSON.stringify({
+            type: "participant_presence",
+            participant: ownPresence,
+          }),
+        )
+        .catch(() => {});
+      rtmClient
+        .publish(
+          agoraData.channel,
+          JSON.stringify({ type: "participant_presence_request" }),
+        )
+        .catch(() => {});
+    };
+    announce();
+  }, [
+    agoraData.channel,
+    agoraData.uid,
+    rtmClient,
+    userSession.name,
+    userSession.role,
+  ]);
 
   // The toolkit uses uid="0" for local user speech — remap to actual RTC UID
   // so the transcript panel renders user messages on the correct side.
@@ -589,6 +727,63 @@ export default function ConversationComponent({
     }
   }, [isEnabled, localMicrophoneTrack]);
 
+  // ─── Intervention Engine ───────────────────────────────────────────────────
+  //
+  // Runs on the teacher's client only. The engine decides *whether* SonaAI contributes; the
+  // agent's own model only decides the wording. Keeping those two apart is what makes the
+  // teacher's control real rather than a polite request inside a prompt.
+  const isTeacher = userSession.role === "teacher";
+
+  /**
+   * Deliver an approved intervention to the live agent.
+   *
+   * Sent over RTM with `ai.sendText` rather than the REST `/think` endpoint: the REST path
+   * needs the Customer ID/Secret pair for HTTP Basic auth and returns 401 from the browser.
+   * `responseInterruptable: true` so a student or the teacher can talk over SonaAI at any point.
+   */
+  const handleEngineSpeak = useCallback(
+    async (instruction: string, decision: InterventionDecision) => {
+      if (!agoraData.agentId) {
+        console.warn("[sona] no agent session — cannot deliver intervention");
+        return;
+      }
+      try {
+        const ai = AgoraVoiceAI.getInstance();
+        if (!ai) throw new Error("AI not initialized");
+        await ai.sendText(agoraData.agentId, {
+          messageType: ChatMessageType.TEXT,
+          text: instruction,
+          priority: ChatMessagePriority.INTERRUPTED,
+          responseInterruptable: true,
+        });
+      } catch (err) {
+        console.error(
+          "[sona] failed to deliver intervention:",
+          err,
+          decision.id,
+        );
+      }
+    },
+    [agoraData.agentId],
+  );
+
+  const engine = useInterventionEngine({
+    sessionId: agoraData.channel,
+    aiMode,
+    enabled: isTeacher && joinSuccess,
+    // Only meaningful for the teacher: on a student's client this is the student's own mic.
+    localMicrophoneTrack: isTeacher ? localMicrophoneTrack : null,
+    onSpeak: handleEngineSpeak,
+  });
+
+  const teacherPresence = participants.find(
+    (participant) => participant.role === "teacher",
+  );
+
+  useEffect(() => {
+    ingestTurnRef.current = isTeacher ? engine.ingestTurn : null;
+  }, [isTeacher, engine.ingestTurn]);
+
   const handleTokenWillExpire = useCallback(async () => {
     if (!onTokenWillExpire || !joinedUID) return;
     try {
@@ -612,38 +807,51 @@ export default function ConversationComponent({
   // Text-chat fallback: lets any participant type a message to the AI.
   // The message is prefixed with speaker identity before injection so the AI
   // sees the same [Role: Name]: format as voice turns.
-  const [chatText, setChatText] = useState('');
+  const [chatText, setChatText] = useState("");
   const [isChatSending, setIsChatSending] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   const handleSendChat = useCallback(async () => {
     const trimmed = chatText.trim();
-    if (!trimmed || isChatSending || !agoraData.agentId) return;
+    if (!trimmed || isChatSending) return;
 
-    const roleLabel =
-      userSession.role === 'teacher' ? 'Teacher' : 'Student';
+    const roleLabel = userSession.role === "teacher" ? "Teacher" : "Student";
     const prefixed = `[${roleLabel}: ${userSession.name}]: ${trimmed}`;
 
     setIsChatSending(true);
-    setChatText('');
+    setChatText("");
 
     // Broadcast as a transcript_turn so it appears in the teacher's log
     // identically to a spoken turn (same format used in TRANSCRIPT_UPDATED).
-    const turn: TranscriptTurn & { type: 'transcript_turn' } = {
-      type: 'transcript_turn',
+    const turn: TranscriptTurn & { type: "transcript_turn" } = {
+      type: "transcript_turn",
       name: userSession.name,
       role: userSession.role,
       text: trimmed,
       timestamp: Date.now(),
     };
     onTranscriptTurnRef.current?.(turn);
+    ingestTurnRef.current?.(turn);
     rtmClient
       .publish(agoraData.channel, JSON.stringify(turn))
-      .catch((err) => console.warn('[chat] RTM broadcast failed:', err));
+      .catch((err) => console.warn("[chat] RTM broadcast failed:", err));
+
+    // Student messages must enter the teacher's intervention engine instead of
+    // bypassing approval through Agora's direct text-injection path.
+    if (userSession.role === "student") {
+      setIsChatSending(false);
+      return;
+    }
+
+    if (!agoraData.agentId) {
+      setIsChatSending(false);
+      return;
+    }
 
     try {
       const ai = AgoraVoiceAI.getInstance();
       if (!ai) throw new Error("AI not initialized");
-      
+
       // Send the text message directly over RTM, avoiding the REST API 401 error
       await ai.sendText(agoraData.agentId, {
         messageType: ChatMessageType.TEXT,
@@ -652,7 +860,7 @@ export default function ConversationComponent({
         responseInterruptable: true,
       });
     } catch (err) {
-      console.error('Failed to send chat message:', err);
+      console.error("Failed to send chat message:", err);
     } finally {
       setIsChatSending(false);
     }
@@ -708,10 +916,68 @@ export default function ConversationComponent({
       micSelector={
         <MicrophoneSelector localMicrophoneTrack={localMicrophoneTrack} />
       }
-      aiMuteControl={teacherControls}
+      aiModeControl={teacherControls}
+      participants={participants}
+      teacherName={
+        teacherPresence?.name ?? (isTeacher ? userSession.name : "Teacher")
+      }
+      onCopyInviteLink={async () => {
+        const inviteUrl = `${window.location.origin}/meeting?join=${encodeURIComponent(agoraData.channel)}`;
+        try {
+          await navigator.clipboard.writeText(inviteUrl);
+          setInviteCopied(true);
+          window.setTimeout(() => setInviteCopied(false), 2200);
+        } catch {
+          const copied = window.prompt(
+            "Copy this class invite link:",
+            inviteUrl,
+          );
+          if (copied !== null) {
+            setInviteCopied(true);
+            window.setTimeout(() => setInviteCopied(false), 2200);
+          }
+        }
+      }}
+      inviteCopied={inviteCopied}
+      aiStateBadge={
+        isTeacher ? (
+          <ClassroomAiStateBadge
+            state={engine.aiState}
+            reason={engine.lastDecision?.reason}
+          />
+        ) : undefined
+      }
+      interventionCard={
+        isTeacher && engine.pendingIntervention ? (
+          <ClassroomInterventionCard
+            decision={engine.pendingIntervention}
+            quotes={engine.pendingQuotes}
+            onAllow={engine.allow}
+            onDeny={engine.deny}
+          />
+        ) : undefined
+      }
+      signalPanel={
+        isTeacher ? (
+          <ClassroomSignalPanel
+            aiMode={aiMode}
+            aiState={engine.aiState}
+            lastDecision={engine.lastDecision}
+            signals={engine.signals}
+            history={engine.history}
+            lessonConcepts={engine.lessonConcepts}
+            teacherIsSpeaking={engine.teacherIsSpeaking}
+          />
+        ) : undefined
+      }
+      sessionTitle={`Class ${userSession.classroomCode}`}
+      participantCount={remoteUsers.length + 1}
       chatInput={
         <form
-          onSubmit={(e) => { e.preventDefault(); void handleSendChat(); }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSendChat();
+          }}
           className="flex w-full items-center gap-2 mt-2"
           aria-label="Type a message to the AI"
         >
@@ -720,14 +986,23 @@ export default function ConversationComponent({
             value={chatText}
             onChange={(e) => setChatText(e.target.value)}
             placeholder="Ask anything about the meeting..."
-            disabled={isChatSending || (summaryModeRef?.current ?? false) || !agoraData.agentId}
+            disabled={
+              isChatSending ||
+              (summaryModeRef?.current ?? false) ||
+              (userSession.role === "teacher" && !agoraData.agentId)
+            }
             maxLength={500}
             className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 disabled:opacity-50 shadow-sm"
             aria-label="Chat message input"
           />
           <button
             type="submit"
-            disabled={!chatText.trim() || isChatSending || (summaryModeRef?.current ?? false) || !agoraData.agentId}
+            disabled={
+              !chatText.trim() ||
+              isChatSending ||
+              (summaryModeRef?.current ?? false) ||
+              (userSession.role === "teacher" && !agoraData.agentId)
+            }
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-none bg-[#D0FFA2] text-[#031A10] transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 shadow-sm"
             aria-label="Send message"
           >

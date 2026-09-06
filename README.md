@@ -93,8 +93,11 @@ Defined in [`env.local.example`](env.local.example).
 | ---------------------------- | :------: | ---------------------------------------------------------------- |
 | `NEXT_PUBLIC_AGORA_APP_ID`   |    ✅    | Agora Console → Project → App ID.                                |
 | `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. **Server-side only.** |
+| `SONA_INTERVENTION_ENGINE`   |    ❌    | Set `true` to route Agora through the SonaAI policy engine.      |
+| `SONA_PUBLIC_BASE_URL`       |    ❌    | Public HTTPS URL of this app when the custom engine is enabled.  |
+| `SONA_LLM_SHARED_SECRET`     |    ❌    | Server-only bearer secret shared with the Agora custom LLM.      |
 
-The default agent configuration in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) uses Agora-managed STT, LLM, and TTS, so no extra vendor API keys are required for the base quickstart.
+The default agent configuration in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) uses Agora-managed STT, LLM, and TTS, so no extra vendor API keys are required for the base quickstart. To enable the forked SonaAI intervention policy, set `SONA_INTERVENTION_ENGINE=true`, provide a public HTTPS `SONA_PUBLIC_BASE_URL`, and set `SONA_LLM_SHARED_SECRET`. Use `SONA_AI_MODE=AUTO` for automatic high-confidence interventions or `ASK` to return silence until a teacher approval workflow is connected.
 
 ## Commands
 
@@ -129,6 +132,8 @@ The browser fetches a combined RTC + RTM token (`buildTokenWithRtm`) from this a
 - browser voice client built with Next.js App Router
 - RTC audio plus RTM transcript and state events
 - server routes for token generation, invite, and stop
+- optional custom SonaAI intervention engine with WAIT / ASK / SPEAK / MUTE policy
+- RTM participant presence with named teacher/student tiles and one-click invite links
 - [`AgentVisualizer`](https://agoraio-conversational-ai.github.io/agent-uikit/) for agent state and a built-in transcript panel for live turns
 - per-stage latency header driven by `AGENT_METRICS`
 - Agora-managed default STT, LLM, and TTS configuration

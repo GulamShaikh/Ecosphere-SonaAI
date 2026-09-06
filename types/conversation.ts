@@ -49,12 +49,30 @@ export interface TranscriptTurn {
   timestamp: number;
 }
 
+export interface ParticipantPresence {
+  uid: string;
+  name: string;
+  role: UserRole;
+}
+
 export interface ConversationComponentProps {
   agoraData: AgoraTokenData;
   rtmClient: RTMClient;
   userSession: UserSession;
   /** Optional slot for teacher-only controls rendered in the controls dock. */
   teacherControls?: ReactNode;
+  /**
+   * The teacher's current permission level for SonaAI. Owned by the parent because leaving
+   * MUTE has to restart the managed agent session, which is the parent's job.
+   *
+   * Students receive the mode over RTM so their UI shows the same thing the teacher set.
+   */
+  aiMode?: import('@/lib/sona/types').AiMode;
+  /**
+   * Called when a mode arrives over RTM from the teacher. Student clients only — the
+   * teacher's own changes go through the control in `teacherControls`.
+   */
+  onRemoteAiMode?: (mode: import('@/lib/sona/types').AiMode) => void;
   /**
    * Called whenever a turn completes (local user or agent) so the parent can
    * accumulate the session transcript log for the post-class summary.

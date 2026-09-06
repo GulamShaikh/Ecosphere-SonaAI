@@ -47,11 +47,12 @@ Responses:
 
 ### `POST /api/chat/completions`
 
-Optional SSE proxy path (not default runtime path). Requires `NEXT_LLM_API_KEY` and `NEXT_LLM_URL` when used.
+OpenAI-compatible SSE endpoint. By default it proxies to `NEXT_LLM_URL` using `NEXT_LLM_API_KEY`. When `SONA_INTERVENTION_ENGINE=true`, Agora authenticates with `Bearer SONA_LLM_SHARED_SECRET`; the endpoint records per-channel classroom context and returns empty content for WAIT, ASK, and MUTE decisions.
 
 ## Event/Data Interfaces
 
 - RTM transcript/state/metrics/errors consumed through `AgoraVoiceAI` event emitter.
+- RTM `participant_presence` and `participant_roster` messages keep named teacher/student tiles synchronized.
 - Raw RTM `message` event parsed as fallback for `message.error` and `message.sal_status` payloads.
 - `AGENT_METRICS` payloads displayed by `ClassroomPipelineMetrics`.
 
@@ -61,6 +62,13 @@ Required:
 
 - `NEXT_PUBLIC_AGORA_APP_ID`
 - `NEXT_AGORA_APP_CERTIFICATE`
+
+Optional custom intervention path:
+
+- `SONA_INTERVENTION_ENGINE=true`
+- `SONA_PUBLIC_BASE_URL` (public HTTPS URL reachable by Agora)
+- `SONA_LLM_SHARED_SECRET`
+- `SONA_AI_MODE` (`AUTO`, `ASK`, or `MUTE`; defaults to `ASK`)
 
 This is the complete base `.env.local` contract. The optional BYOK route and provider snippets use additional variables only when a developer explicitly enables them.
 

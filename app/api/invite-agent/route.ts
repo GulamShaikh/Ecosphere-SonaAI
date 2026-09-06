@@ -26,10 +26,11 @@ const SONAAI_PROMPT = `You are SonaAI, an AI co-teacher assistant in a live clas
 The teacher who opened this classroom is {{teacher_name}}. Other voices in the room are students unless they say otherwise. You cannot reliably tell who is speaking on each turn, so do not assume — judge each question on its own terms.
 
 # Default behaviour — listen first
-Stay silent unless you are:
-- Directly asked a question or asked to explain something
-- Invited to run a quiz or check comprehension
-- Addressing repeated confusion about the same concept
+Listen to every classroom voice so the teacher dashboard can detect questions and confusion.
+Student speech is context, not permission to speak. Do not answer a student directly, do not
+volunteer an explanation, and do not speak merely because someone says your name. Remain silent
+until you receive an instruction beginning with "The teacher has approved you to help". That
+instruction is the only authorization to give a student-facing intervention response.
 
 Do NOT speak over the teacher while they are actively explaining. Never add unsolicited commentary between other people's turns.
 
@@ -40,8 +41,10 @@ This is your primary way of calibrating — not assumed identity. Use these sign
 - Do not assume a question is simple just because it came after a simple one, or advanced just because of who you think is asking
 - If someone says "explain it more simply" or "give me more detail", honour that immediately
 
-# If the teacher asks you directly
-Respond as a peer: concise, collegial, technically accurate. You do not need to simplify for the teacher unless they ask.
+# Teacher commands
+If a message is prefixed with [Teacher: ...], treat it as an explicit teacher command and
+respond concisely. Messages prefixed with [Student: ...] must not cause you to speak; wait for
+the teacher approval instruction instead.
 
 # Language
 Respond in the same language or language mix the speaker used. Handle code-switched speech naturally.
@@ -66,11 +69,23 @@ This is text-to-speech audio. Follow these rules strictly:
 # Tone
 Warm, encouraging, and direct. You are a teaching assistant, not a search engine. Guide people to understanding rather than just giving answers.`;
 
-// Greeting said when the agent first joins the room.
-const GREETING = `Hi everyone, I'm SonaAI, your AI co-teacher. I'll be here to help explain concepts and answer questions whenever you need me.`;
+// The teacher decides when SonaAI speaks. A silent join avoids an unsolicited opening turn.
+const GREETING = '';
 
 // agentUid identifies the AI in the RTC channel and shares its default with the client.
 const agentUid = String(DEFAULT_AGENT_UID);
+
+function customLlmEnabled(): boolean {
+  return process.env.SONA_INTERVENTION_ENGINE === 'true';
+}
+
+function customLlmUrl(): string {
+  const baseUrl = process.env.SONA_PUBLIC_BASE_URL?.replace(/\/$/, '');
+  if (!baseUrl) {
+    throw new Error('SONA_PUBLIC_BASE_URL is required when SONA_INTERVENTION_ENGINE=true');
+  }
+  return `${baseUrl}/api/chat/completions`;
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -163,7 +178,7 @@ export async function POST(request: NextRequest) {
       .withStt(
         new DeepgramSTT({
           model: 'nova-3',
-          language: 'en',
+          language: process.env.NEXT_DEEPGRAM_LANGUAGE ?? 'en-US',
         }),
         // BYOK: uncomment the following block and set NEXT_DEEPGRAM_API_KEY
         // new DeepgramSTT({
@@ -173,22 +188,31 @@ export async function POST(request: NextRequest) {
         // }),
       )
       .withLlm(
-        new OpenAI({
-          model: 'gpt-4o-mini',
-          greetingMessage: GREETING,
-          failureMessage: 'Please wait a moment.',
-          maxHistory: 15,
-          // Substitute the teacher's name into the system prompt at session start.
-          // {{teacher_name}} resolves to the name of whoever opened the classroom.
-          templateVariables: {
-            teacher_name: teacherName,
-          },
-          params: {
-            max_tokens: 1024,
-            temperature: 0.7,
-            top_p: 0.95,
-          },
-        }),
+        customLlmEnabled()
+          ? new OpenAI({
+              apiKey: requireEnv('SONA_LLM_SHARED_SECRET'),
+              url: customLlmUrl(),
+              model: 'sonaai-intervention-engine',
+              greetingMessage: '',
+              failureMessage: 'Please wait a moment.',
+              maxHistory: 32,
+            })
+          : new OpenAI({
+              model: 'gpt-4o-mini',
+              greetingMessage: GREETING,
+              failureMessage: 'Please wait a moment.',
+              maxHistory: 15,
+              // Substitute the teacher's name into the system prompt at session start.
+              // {{teacher_name}} resolves to the name of whoever opened the classroom.
+              templateVariables: {
+                teacher_name: teacherName,
+              },
+              params: {
+                max_tokens: 1024,
+                temperature: 0.7,
+                top_p: 0.95,
+              },
+            }),
         // BYOK: uncomment the following block and set NEXT_LLM_API_KEY and NEXT_LLM_URL
         // new OpenAI({
         //   apiKey: requireEnv('NEXT_LLM_API_KEY'),
