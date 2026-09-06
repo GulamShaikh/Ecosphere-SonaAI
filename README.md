@@ -1,122 +1,92 @@
-# Agora Conversational AI Next.js Quickstart
+# SonaAI Classroom
 
-[![Build](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml/badge.svg)](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml)
+<p align="center">
+   <img src="./public/SonaAI%20icon1.png" width="128" alt="SonaAI logo" />
+</p>
+
+<p align="center">
+   <strong>The AI co-teacher that knows when to speak.</strong><br />
+   A live classroom built with Next.js, Agora Conversational AI, and Supabase.
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
 
-Build a production-style voice agent in minutes with Next.js and the Agora Conversational AI Engine, including voice agent visualizer ([Agent UIKit](https://agoraio-conversational-ai.github.io/agent-uikit/)), live transcript, and real-time pipeline latency via `AGENT_METRICS` ([Agent Toolkit](https://github.com/AgoraIO-Conversational-AI/agent-client-toolkit-ts)).
+SonaAI joins a live classroom as an AI participant, follows the lesson, detects learning gaps, and asks the teacher before offering help. Teachers and students join the same Agora room with named participant tiles, live transcript, intervention signals, and post-class learning support.
+
+![SonaAI classroom logo](./public/SonaAI%20icon1.png)
+
+## Highlights
+
+- Live teacher and student voice classroom through Agora RTC.
+- Agora Conversational AI participant with STT, LLM, TTS, transcript, and latency events.
+- Teacher-controlled `AUTO`, `ASK`, and `MUTE` modes.
+- Deterministic `SPEAK`, `WAIT`, `ASK`, and `MUTE` intervention policy.
+- Named teacher/student presence tiles and invite links.
+- Intervention card with evidence and **Allow** / **Not now** actions.
+- Teacher post-class summary with PDF download.
+- Student post-class exercise based on the lesson context.
+- Supabase authentication and profile support.
 
 ## Prerequisites
 
 - [Node.js 22+](https://nodejs.org/en/download/)
 - [pnpm](https://pnpm.io/installation)
-- [Agora CLI](https://github.com/AgoraIO-Community/cli)
+- An Agora project with Conversational AI enabled.
+- A Supabase project for authentication.
 
-## Run It
-
-Getting started is quick and easy: install the CLI _(skip if you already have it)_ , scaffold the Next.js quickstart using the Agora CLI, install dependencies, and run.
-
-1. **Install the Agora CLI and sign in**
-   _(skip if `agora` is already on your PATH)_:
-
-   macOS and Linux:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/AgoraIO/cli/main/install.sh | sh -s -- --add-to-path
-   ```
-
-   Windows PowerShell:
-
-   ```powershell
-   irm https://dl.agora.io/cli/install.ps1 | iex
-   ```
-
-   If the Windows install command fails in PowerShell, try running the macOS/Linux command from [Git Bash](https://git-scm.com/downloads/win), then open a new terminal and run `agora --help` to confirm the CLI is on your PATH.
-
-   Then verify and sign in:
-
-   ```bash
-   agora --help
-   agora login
-   ```
-
-   If `agora --help` is not found after install, close and reopen your terminal, then try again. If it still fails, check that the installer-added Agora CLI location is on your shell `PATH`.
-
-2. **Scaffold and run**
-   `agora init` clones the starter, binds an Agora project, and writes `.env.local`. (replace `my-nextjs-demo` with your own project name):
-
-   ```bash
-   agora init my-nextjs-demo --template nextjs
-   cd my-nextjs-demo
-   pnpm install
-   pnpm dev
-   ```
-
-3. Open [http://localhost:3000](http://localhost:3000) and click **Start conversation**.
-
-If the agent does not join or transcripts do not appear, run **`agora project doctor --deep`** to check credentials, feature enablement, network reachability, and local env binding.
-
-### Working from a clone of this repository
-
-Use this path if you already cloned **this** repo (for example to contribute or fork):
+## Run Locally
 
 ```bash
-git clone https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs.git
-cd agent-quickstart-nextjs
-agora login
-agora project use <your-project>
 pnpm install
-agora project env write .env.local
-agora project doctor --deep
 pnpm dev
 ```
 
-### Deploy to Vercel
+Open [http://localhost:3000](http://localhost:3000). Sign in as a teacher, start a class, then use **Invite students** to share the classroom link.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs&project-name=agent-quickstart-nextjs&repository-name=agent-quickstart-nextjs&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE&envDescription=Agora%20credentials%20needed%20to%20run%20the%20app&envLink=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%23run-it&demo-title=Agora%20Conversational%20AI%20Next.js%20Quickstart&demo-description=Official%20Next.js%20quickstart%20for%20building%20browser-based%20voice%20AI%20with%20Agora&demo-image=https%3A%2F%2Fraw.githubusercontent.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%2Fmain%2F.github%2Fassets%2FConversation-Ai-Client.gif)
+For a live custom intervention engine, Agora Cloud must reach the application through public HTTPS. Use a deployed URL or a tunnel during local rehearsal.
 
-To populate Vercel env vars from your bound Agora project:
+## Environment
 
-```bash
-agora project use <your-project>
-agora project env write .env.local
-rg "^(NEXT_PUBLIC_AGORA_APP_ID|NEXT_AGORA_APP_CERTIFICATE)=" .env.local
+Copy `env.local.example` to `.env.local` and fill in the values:
+
+```env
+NEXT_PUBLIC_AGORA_APP_ID=...
+NEXT_AGORA_APP_CERTIFICATE=...
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+
+# Required for strict teacher approval through the custom intervention engine
+SONA_INTERVENTION_ENGINE=true
+SONA_PUBLIC_BASE_URL=https://your-public-domain.example
+SONA_LLM_SHARED_SECRET=...
+SONA_AI_MODE=ASK
+NEXT_DEEPGRAM_LANGUAGE=en-US
+NEXT_LLM_URL=https://api.openai.com/v1/chat/completions
+NEXT_LLM_API_KEY=...
+NEXT_LLM_MODEL=gpt-4o-mini
 ```
 
-Copy those two values into Vercel Project Settings -> Environment Variables.
+Keep `.env.local` private. Never expose the Agora App Certificate or LLM keys in client code.
 
-### Environment variables
+## Deploy
 
-Defined in [`env.local.example`](env.local.example).
+Railway or Render is recommended for the complete app because the custom intervention engine keeps short-lived classroom state server-side and Agora requires a stable public HTTPS endpoint. Vercel can host the Next.js UI, but a persistent Node host is preferable for the strict intervention path.
 
-| Variable                     | Required | Notes                                                            |
-| ---------------------------- | :------: | ---------------------------------------------------------------- |
-| `NEXT_PUBLIC_AGORA_APP_ID`   |    ✅    | Agora Console → Project → App ID.                                |
-| `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. **Server-side only.** |
-| `SONA_INTERVENTION_ENGINE`   |    ❌    | Set `true` to route Agora through the SonaAI policy engine.      |
-| `SONA_PUBLIC_BASE_URL`       |    ❌    | Public HTTPS URL of this app when the custom engine is enabled.  |
-| `SONA_LLM_SHARED_SECRET`     |    ❌    | Server-only bearer secret shared with the Agora custom LLM.      |
+Set the same environment variables in the hosting provider dashboard and set `SONA_PUBLIC_BASE_URL` to the deployed URL.
 
-The default agent configuration in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) uses Agora-managed STT, LLM, and TTS, so no extra vendor API keys are required for the base quickstart. To enable the forked SonaAI intervention policy, set `SONA_INTERVENTION_ENGINE=true`, provide a public HTTPS `SONA_PUBLIC_BASE_URL`, and set `SONA_LLM_SHARED_SECRET`. Use `SONA_AI_MODE=AUTO` for automatic high-confidence interventions or `ASK` to return silence until a teacher approval workflow is connected.
-
-## Commands
+## Verification
 
 ```bash
-# Dev
-pnpm dev                # start the Next.js dev server
-
-# Quality
-pnpm run lint           # eslint
-pnpm run typecheck      # tsc --noEmit
-pnpm run doctor         # local prereqs + env binding
-
-# CI / pre-ship
-pnpm run verify:api     # API contract checks
-pnpm run build          # production build
-pnpm run verify         # doctor + lint + typecheck + verify:api + build
+pnpm run doctor
+pnpm run lint
+pnpm run typecheck
+pnpm run test
+pnpm run verify:api
+pnpm run build
+pnpm run verify
 ```
 
-Run `pnpm run verify` before shipping changes — it covers local prerequisites, lint, type safety, the core API route contracts, and the production build.
+The project currently verifies with 23 intervention-policy tests, API contract checks, and a successful production build. Lint emits non-blocking warnings from existing UI code.
 
 ## Architecture
 
@@ -148,7 +118,7 @@ The browser fetches a combined RTC + RTM token (`buildTokenWithRtm`) from this a
 
 ## Optional BYOK
 
-The base `.env.local` contract contains only Agora credentials. If you are migrating from a supported provider, uncomment the matching snippet in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) and add its variables to your local environment.
+The default path uses Agora-managed STT, LLM, and TTS. If you need provider-owned credentials, uncomment the matching snippet in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) and add its variables to your local environment.
 
 ```bash
 # Deepgram STT
