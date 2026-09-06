@@ -8,7 +8,6 @@ import AgoraRTC, {
   useClientEvent,
   useJoin,
   usePublish,
-  RemoteUser,
   UID,
 } from "agora-rtc-react";
 import {
@@ -25,8 +24,7 @@ import {
   type AgentTranscription,
 } from "agora-agent-client-toolkit";
 import { SonaAIExpression } from "@/components/SonaAIExpression";
-import { MicButtonWithVisualizer } from "agora-agent-uikit/rtc";
-import { Loader2, SendHorizontal } from "lucide-react";
+import { Loader2, Mic, MicOff, SendHorizontal } from "lucide-react";
 import { DEFAULT_AGENT_UID } from "@/lib/agora";
 import {
   getCurrentInProgressMessage,
@@ -665,6 +663,11 @@ export default function ConversationComponent({
     if (user.uid.toString() === agentUID) setIsAgentConnected(false);
   });
 
+  useClientEvent(client, "user-published", async (user, mediaType) => {
+    await client.subscribe(user, mediaType);
+    if (mediaType === "audio") user.audioTrack?.play();
+  });
+
   // Sync isAgentConnected with remoteUsers (covers cases where user-joined/left are missed)
   useEffect(() => {
     const isAgentInRemoteUsers = remoteUsers.some(
@@ -892,25 +895,22 @@ export default function ConversationComponent({
           aria-label="AI agent status visualization"
         >
           <SonaAIExpression state={visualizerState} size="lg" />
-          {remoteUsers.map((user) => (
-            <div key={user.uid} className="hidden">
-              <RemoteUser user={user} />
-            </div>
-          ))}
         </div>
       }
       controls={
         <div className="conversation-mic-host flex items-center justify-center">
-          <MicButtonWithVisualizer
-            isEnabled={isEnabled}
-            setIsEnabled={setIsEnabled}
-            track={localMicrophoneTrack}
-            onToggle={handleMicToggle}
-            className="overflow-visible"
+          <button
+            type="button"
+            onClick={handleMicToggle}
             aria-label={isEnabled ? "Mute microphone" : "Unmute microphone"}
-            enabledColor="hsl(var(--primary))"
-            disabledColor="hsl(var(--destructive))"
-          />
+            className={`flex h-12 w-12 items-center justify-center rounded-full text-xl shadow-lg transition-colors ${
+              isEnabled
+                ? "bg-primary text-primary-foreground"
+                : "bg-destructive text-destructive-foreground"
+            }`}
+          >
+            {isEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+          </button>
         </div>
       }
       micSelector={
