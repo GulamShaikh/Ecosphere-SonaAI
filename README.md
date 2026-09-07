@@ -13,8 +13,6 @@
 
 SonaAI joins a live classroom as an AI participant, follows the lesson, detects learning gaps, and asks the teacher before offering help. Teachers and students join the same Agora room with named participant tiles, live transcript, intervention signals, and post-class learning support.
 
-![SonaAI classroom logo](./public/SonaAI%20icon1.png)
-
 ## Highlights
 
 - Live teacher and student voice classroom through Agora RTC.
@@ -161,9 +159,16 @@ NEXT_ELEVENLABS_VOICE_ID=...
 - [docs/ai/RECIPE.md](./docs/ai/RECIPE.md)
 - [AGENTS.md](./AGENTS.md)
 
-## Contributing
+## Team & Contribution
 
-Pull requests welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and conventions.
+| Owner | Role | Scope |
+|---|---|---|
+| **Gulam Dastgir** | AI & Agentic Systems Lead | `backend/src/sona/`, context model, intervention engine, LLM logic |
+| **Nikhil Sharma** | Full-Stack & Product Engineer | `frontend/`, `backend/src/routes/`, auth/session UI, reports |
+| **Inayat Shaikh** | Cloud & Infrastructure Engineer | `backend/src/agora/`, deployment, secrets, observability, demo reliability |
+
+Contract changes (`packages/shared/`, `docs/API_CONTRACT.md`) need agreement from all three.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Security
 
