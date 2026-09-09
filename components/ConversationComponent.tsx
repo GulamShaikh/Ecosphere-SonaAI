@@ -909,7 +909,11 @@ export default function ConversationComponent({
                 : "bg-destructive text-destructive-foreground"
             }`}
           >
-            {isEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+            {isEnabled ? (
+              <Mic className="h-5 w-5" />
+            ) : (
+              <MicOff className="h-5 w-5" />
+            )}
           </button>
         </div>
       }
